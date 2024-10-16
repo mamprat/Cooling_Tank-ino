@@ -63,5 +63,6 @@ void loop() {
   } else {
     digitalWrite(Trigger_Lamp, HIGH);
     digitalWrite(Trigger_Alarm, HIGH);
+    dmd.drawString(1, 1, String("error"));
   }
 }
