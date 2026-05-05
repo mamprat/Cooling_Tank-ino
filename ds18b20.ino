@@ -1,68 +1,108 @@
-// //======= sensor ds18b20 =======
-#include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#define ONE_WIRE_BUS 14
+#include <DMD2.h>
+#include <SPI.h>
+#include <fonts/SystemFont5x7.h>
+
+// ======= Sensor DS18B20 =======
+#define ONE_WIRE_BUS 3
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
-// //======= display dot matrix =======
-#include <SPI.h>
-#include <DMD2.h>
-#include <fonts/SystemFont5x7.h>
-
+// ======= Display =======
 SoftDMD dmd(1, 1);
-DMD_TextBox box(dmd, 1, 1, 32, 16);
 
-// //======= lamp =======
-const int Trigger_Lamp = 5;
-const int Trigger_Alarm = 4;
-int temp;
-int Standard;
+// ======= Konfigurasi =======
+const int Standard             = 25;
+const int TEMP_MIN             = 2;
+const int TEMP_MAX             = 60;
+const unsigned long INTERVAL_READ  = 1000;
+const unsigned long INTERVAL_RESET = 600000;
+
+// ======= Variabel State =======
+unsigned long lastReadTime  = 0;
+unsigned long lastResetTime = 0;
+int memory                  = 0;
+int lastDisplayedTemp       = -999;
+
+// ======= Reset & Buffer =======
+void (*resetFunc)(void) = 0;
+char tempBuf[6];
+char svBuf[6];
 
 void setup() {
   Serial.begin(9600);
-  sensors.begin();
+  Serial.println("== System Boot ==");
+
+  // 1. DMD pertama
   dmd.begin();
-  delay(100);
-
-  pinMode(Trigger_Lamp, OUTPUT);
-  pinMode(Trigger_Alarm, OUTPUT);
-
-  dmd.setBrightness(150);
+  dmd.setBrightness(130);
   dmd.selectFont(SystemFont5x7);
+
+  dmd.clearScreen();
+  dmd.drawString(2,  0, "SV");
+  dmd.drawString(19, 0, "PV");
+  itoa(Standard, svBuf, 10);
+  dmd.drawString(2,  9, svBuf);
+  dmd.drawString(19, 9, "--");
+
+  // 2. Init DS18B20
+  sensors.begin();
+  int deviceCount = sensors.getDeviceCount();
+  Serial.print("Sensor ditemukan: ");
+  Serial.println(deviceCount);
+
+  if (deviceCount == 0) {
+    dmd.clearScreen();
+    dmd.drawString(2, 0, "Err");
+    dmd.drawString(2, 8, "DS!");
+    Serial.println("ERROR: DS18B20 tidak ditemukan!");
+    while (1);
+  }
+
+  // Tampilan header final
+  dmd.clearScreen();
+  dmd.drawString(2,  0, "SV");
+  dmd.drawString(19, 0, "PV");
+  itoa(Standard, svBuf, 10);
+  dmd.drawString(2,  9, svBuf);
+
+  Serial.println("== System Ready ==");
 }
 
 void loop() {
-  sensors.requestTemperatures();
-  temp = sensors.getTempCByIndex(0);
+  unsigned long currentMillis = millis();
 
-  if (temp > -127.00 && temp < 85.00) {
-    Serial.print(temp);
-    delay(1000);
-    dmd.drawString(2, 0, String("St"));
-    dmd.drawString(19, 0, String("Pv"));
-    dmd.drawString(2, 8, String("25"));
-    dmd.drawString(19, 8, String(temp));
+  if (currentMillis - lastReadTime >= INTERVAL_READ) {
+    lastReadTime = currentMillis;
 
-    delay(10000);
+    sensors.requestTemperatures();
+    float tempReading = sensors.getTempCByIndex(0);
+    int temp = (int)tempReading;
 
-  } else {
-    // int memory = random(14.6, 15.3);
-    int memory = temp;
-    Serial.print(memory);
-    delay(1000);
-    dmd.drawString(19, 8, String(memory));
-    delay(50);
+    Serial.print("Temp: ");
+    Serial.print(tempReading, 1);
+    Serial.println(" C");
+
+    if (tempReading != DEVICE_DISCONNECTED_C && temp > TEMP_MIN && temp < TEMP_MAX) {
+      memory = temp;
+    } else {
+      temp = memory;
+      Serial.println("Peringatan: Bacaan invalid, pakai nilai memori.");
+    }
+
+    if (temp != lastDisplayedTemp) {
+      lastDisplayedTemp = temp;
+      dmd.drawFilledBox(19, 9, 31, 15, GRAPHICS_OFF);
+      itoa(temp, tempBuf, 10);
+      dmd.drawString(19, 9, tempBuf);
+      Serial.print("Display PV: ");
+      Serial.println(temp);
+    }
   }
 
-  Standard = 25;  //20
-  if (temp > Standard) {
-    digitalWrite(Trigger_Lamp, LOW);
-    digitalWrite(Trigger_Alarm, LOW);
-  } else {
-    digitalWrite(Trigger_Lamp, HIGH);
-    digitalWrite(Trigger_Alarm, HIGH);
-    dmd.drawString(1, 1, String("error"));
+  if (currentMillis - lastResetTime >= INTERVAL_RESET) {
+    Serial.println("Auto Reset...");
+    resetFunc();
   }
 }
